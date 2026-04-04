@@ -5,19 +5,25 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/lowplane/kerno/internal/bpf"
 )
 
 func newStartCmd() *cobra.Command {
 	var (
-		prometheus bool
-		dashboard  bool
+		prometheus     bool
+		prometheusAddr string
+		dashboard      bool
 	)
 
 	cmd := &cobra.Command{
@@ -31,62 +37,209 @@ long-running observability on standalone servers.`,
 		Example: `  # Start with Prometheus metrics
   sudo kerno start
 
-  # Start with web dashboard
-  sudo kerno start --dashboard
+  # Start with custom Prometheus address
+  sudo kerno start --prometheus-addr :9091
 
-  # Start with custom listen addresses
-  sudo kerno start --prometheus=:9090 --dashboard=:8080`,
+  # Start with web dashboard
+  sudo kerno start --dashboard`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runStart(cmd.Context(), prometheus, dashboard)
+			return runStart(cmd.Context(), startOpts{
+				prometheus:     prometheus,
+				prometheusAddr: prometheusAddr,
+				dashboard:      dashboard,
+			})
 		},
 	}
 
 	flags := cmd.Flags()
 	flags.BoolVar(&prometheus, "prometheus", true, "enable Prometheus /metrics endpoint")
+	flags.StringVar(&prometheusAddr, "prometheus-addr", "", "Prometheus listen address (default from config)")
 	flags.BoolVar(&dashboard, "dashboard", false, "enable the embedded web dashboard")
 
 	return cmd
 }
 
-func runStart(ctx context.Context, prometheus bool, dashboard bool) error {
+type startOpts struct {
+	prometheus     bool
+	prometheusAddr string
+	dashboard      bool
+}
+
+func runStart(ctx context.Context, opts startOpts) error {
+	if err := requireRoot(); err != nil {
+		return err
+	}
+
 	logger := slog.Default()
 
 	logger.Info("starting kerno daemon",
-		"prometheus", prometheus,
-		"dashboard", dashboard,
+		"prometheus", opts.prometheus,
+		"dashboard", opts.dashboard,
 	)
 
 	// Set up OS signal handling for graceful shutdown.
 	ctx, cancel := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// TODO(phase-4): Implement daemon startup:
-	//   1. Detect environment (K8s, systemd, bare metal)
-	//   2. Load eBPF programs
-	//   3. Start all enabled collectors
-	//   4. Start Prometheus HTTP server (if enabled)
-	//   5. Start dashboard HTTP server (if enabled)
-	//   6. Block until signal
+	// Resolve Prometheus address.
+	promAddr := cfg.Prometheus.Addr
+	if opts.prometheusAddr != "" {
+		promAddr = opts.prometheusAddr
+	}
 
-	fmt.Println("kerno daemon starting...")
-	fmt.Printf("  Prometheus:  %v\n", prometheus)
-	fmt.Printf("  Dashboard:   %v\n", dashboard)
+	// Phase 1: Load eBPF programs with graceful degradation.
+	loaders, loaderSet := buildLoaders(logger)
+	loadedCount := 0
+	var closers []func()
+
+	for _, l := range loaders {
+		closer, err := l.Load()
+		if err != nil {
+			logger.Warn("failed to load eBPF program, skipping",
+				"program", l.Name(),
+				"error", err,
+			)
+			continue
+		}
+		closers = append(closers, func() { closer.Close() })
+		loadedCount++
+		logger.Info("loaded eBPF program", "program", l.Name())
+	}
+
+	defer func() {
+		for _, c := range closers {
+			c()
+		}
+	}()
+
+	logger.Info("eBPF programs loaded", "loaded", loadedCount, "total", len(loaders))
+
+	// Phase 2: Start event drain goroutines to prevent kernel ring buffer drops.
+	for _, l := range loaderSet.Loaders() {
+		ch, err := l.Events(ctx)
+		if err != nil {
+			logger.Debug("skipping event drain for unloaded program", "program", l.Name())
+			continue
+		}
+		go drainEvents(ctx, l.Name(), ch, logger)
+	}
+
+	// Phase 3: Start HTTP server for health and metrics.
+	var httpServer *http.Server
+	if opts.prometheus {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", healthzHandler(loadedCount, len(loaders)))
+		mux.HandleFunc("/metrics", metricsHandler())
+
+		httpServer = &http.Server{
+			Addr:    promAddr,
+			Handler: mux,
+		}
+
+		go func() {
+			logger.Info("starting HTTP server", "addr", promAddr)
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				logger.Error("HTTP server error", "error", err)
+			}
+		}()
+	}
+
+	// Log daemon status.
+	fmt.Println("kerno daemon running")
+	fmt.Printf("  eBPF programs: %d/%d loaded\n", loadedCount, len(loaders))
+	if opts.prometheus {
+		fmt.Printf("  Prometheus:    http://%s/metrics\n", promAddr)
+		fmt.Printf("  Health:        http://%s/healthz\n", promAddr)
+	}
+	if opts.dashboard {
+		fmt.Printf("  Dashboard:     http://%s (not yet implemented)\n", cfg.Dashboard.Addr)
+	}
 	fmt.Println()
-	fmt.Println("  Waiting for implementation (Phase 4).")
-	fmt.Println("  Press Ctrl+C to stop.")
+	fmt.Println("Press Ctrl+C to stop.")
 
 	// Block until shutdown signal.
 	<-ctx.Done()
 
 	logger.Info("shutting down kerno daemon")
 
-	// TODO(phase-4): Graceful shutdown:
-	//   1. Stop collectors
-	//   2. Drain ring buffers
-	//   3. Close BPF links
-	//   4. Flush metrics
-	//   5. Stop HTTP servers
+	// Phase 4: Graceful shutdown.
+	if httpServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("HTTP server shutdown error", "error", err)
+		}
+	}
 
+	logger.Info("kerno daemon stopped")
 	return nil
+}
+
+// buildLoaders creates the set of BPF loaders based on config.
+func buildLoaders(logger *slog.Logger) ([]bpf.Loader, *bpf.LoaderSet) {
+	var loaders []bpf.Loader
+
+	if cfg.Collectors.SyscallLatency {
+		loaders = append(loaders, bpf.NewSyscallLatencyLoader(logger))
+	}
+	if cfg.Collectors.TCPMonitor {
+		loaders = append(loaders, bpf.NewTCPMonitorLoader(logger))
+	}
+	if cfg.Collectors.OOMTrack {
+		loaders = append(loaders, bpf.NewOOMTrackLoader(logger))
+	}
+	if cfg.Collectors.DiskIO {
+		loaders = append(loaders, bpf.NewDiskIOLoader(logger))
+	}
+	if cfg.Collectors.SchedDelay {
+		loaders = append(loaders, bpf.NewSchedDelayLoader(logger))
+	}
+	if cfg.Collectors.FDTrack {
+		loaders = append(loaders, bpf.NewFDTrackLoader(logger))
+	}
+
+	set := bpf.NewLoaderSet(logger, loaders...)
+	return loaders, set
+}
+
+// drainEvents reads and discards events to prevent kernel ring buffer overflow.
+func drainEvents(ctx context.Context, name string, ch <-chan bpf.RawEvent, logger *slog.Logger) {
+	count := uint64(0)
+	for {
+		select {
+		case <-ctx.Done():
+			logger.Debug("event drain stopped", "program", name, "events", count)
+			return
+		case _, ok := <-ch:
+			if !ok {
+				return
+			}
+			count++
+		}
+	}
+}
+
+// healthzHandler returns the health check handler.
+func healthzHandler(loaded, total int) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status":         "ok",
+			"programsLoaded": loaded,
+			"programsTotal":  total,
+		})
+	}
+}
+
+// metricsHandler returns a placeholder metrics handler.
+// Full Prometheus metrics will be implemented in Phase 5.
+func metricsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		fmt.Fprintln(w, "# Kerno metrics placeholder — full implementation in Phase 5")
+		fmt.Fprintln(w, "# See: https://github.com/lowplane/kerno")
+		fmt.Fprintf(w, "kerno_info{version=\"dev\"} 1\n")
+	}
 }

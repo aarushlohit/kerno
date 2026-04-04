@@ -53,6 +53,8 @@ Run 'kerno doctor' for a 30-second automated kernel diagnostic.`,
 		newPredictCmd(),
 		newVersionCmd(),
 		newStartCmd(),
+		newTraceCmd(),
+		newWatchCmd(),
 	)
 
 	return root
