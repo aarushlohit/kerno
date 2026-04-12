@@ -2,9 +2,9 @@
 
 # KERNO
 
-### The doctor for your Linux kernel
+### Production broke? One command. Root cause. 30 seconds.
 
-**Know what's wrong with your server in 30 seconds - in plain English.**
+**eBPF-powered incident diagnosis for Kubernetes & Linux - in plain English. No PhD required.**
 
 [![CI](https://github.com/lowplane/kerno/actions/workflows/ci.yml/badge.svg)](https://github.com/lowplane/kerno/actions/workflows/ci.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/lowplane/kerno)](https://goreportcard.com/report/github.com/lowplane/kerno)
