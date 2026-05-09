@@ -146,22 +146,8 @@ func TestFormatDev(t *testing.T) {
 	}
 }
 
-func TestSyscallName(t *testing.T) {
-	tests := []struct {
-		nr   uint32
-		want string
-	}{
-		{0, "read"},
-		{1, "write"},
-		{59, "execve"},
-		{99999, "syscall_99999"},
-	}
-	for _, tt := range tests {
-		if got := syscallName(tt.nr); got != tt.want {
-			t.Errorf("syscallName(%d) = %q, want %q", tt.nr, got, tt.want)
-		}
-	}
-}
+// syscallName resolution moved to bpf.SyscallName; the dedicated test
+// lives in internal/bpf/decode_test.go.
 
 // ─── Encoding helpers ─────────────────────────────────────────────────────
 // These produce binary blobs matching the Go struct layout so
