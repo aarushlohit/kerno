@@ -4,30 +4,33 @@
 # vhs tape — records the kerno doctor MVP demo for the README hero GIF.
 #
 # IMPORTANT: vhs records a non-interactive shell that cannot type a sudo
-# password. The Makefile runs vhs itself as root so the recorded shell
-# is already privileged — no `sudo` typed in this tape.
+# password. The Makefile grants bin/kerno the BPF caps via setcap so
+# this tape never types `sudo`.
+#
+# The doctor output is the MVP — we widen the canvas so the KERNO logo
+# and box-drawn report aren't cropped, and dwell on the final report
+# for ~25 s so a viewer can actually read the findings.
 #
 # Run with:    make demo
-# Direct:      sudo $(which vhs) demo.tape
-# Output:      demo.gif (~5 MB target after gifsicle)
+# Output:      demo.gif
 
 Output demo.gif
 
 # ── visual config ──
+# Width 1300 fits the 80-col box-drawn finding plus padding without
+# wrapping. Height 820 leaves room for header + degradation panel +
+# 2 findings + summary in a single screen.
 Set Shell      "bash"
 Set FontSize   14
-Set Width      1100
-Set Height     720
+Set Width      1300
+Set Height     820
 Set Theme      "Dracula"
-Set TypingSpeed 35ms
-Set Padding    20
+Set TypingSpeed 40ms
+Set Padding    24
 
 # ── silent setup ──
-# Hide the prompt-cleanup, PATH wiring, and demo-config selection so
-# the viewer sees `kerno doctor` — the clean marketing command — and
-# nothing else. KERNO_CONFIG points at the test-tuned thresholds that
-# fire on synthetic chaos load (production defaults are calibrated for
-# real incidents and won't trip on a healthy SSD dev box).
+# Hide PATH/config/prompt setup so the recording shows only the clean
+# `kerno doctor` marketing surface.
 Hide
 Type "export PS1='$ '"
 Enter
@@ -41,33 +44,36 @@ Show
 
 # ── intro ──
 Type "# Kerno doctor — kernel-level incident diagnosis in one command"
-Sleep 1s
+Sleep 1500ms
 Enter
-Sleep 500ms
+Sleep 600ms
 
 Type "# Step 1: induce a synthetic disk-fsync bottleneck"
-Sleep 600ms
+Sleep 800ms
 Enter
 Type "kerno chaos --induce disk-sat --duration 25s --intensity high --yes &"
 Enter
-Sleep 2s
+# Let chaos warm up the kernel signals.
+Sleep 3s
 
 Hide
 Type "clear"
 Enter
 Show
 
-# ── doctor run — the hero shot ──
+# ── doctor run — the MVP hero shot ──
 Type "# Step 2: ask the kernel what's wrong"
-Sleep 600ms
+Sleep 800ms
 Enter
 Type "kerno doctor --duration 10s"
 Enter
 
-# Doctor takes ~10s to collect + a couple seconds to render the
-# box-drawn report. Wait for output to fully paint.
-Sleep 15s
+# Doctor runs for ~10 s + a couple seconds to render. After it paints,
+# dwell for ~22 s so the viewer can read the KERNO banner, the findings
+# panel, evidence, and the recommended action order. This is the part
+# we want every viewer to actually read.
+Sleep 35s
 
 # ── outro ──
 Type "# Root cause identified. Same flow runs in CI: 'make verify'."
-Sleep 3s
+Sleep 5s
