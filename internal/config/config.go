@@ -126,8 +126,10 @@ type KubernetesConfig struct {
 // Default returns the default configuration.
 func Default() *Config {
 	return &Config{
-		LogLevel:  "info",
-		LogFormat: "text",
+		LogLevel: "info",
+		// "auto" picks JSON when stderr isn't a terminal (daemon/CI/k8s)
+		// and text when it is. Users can pin "text" or "json" explicitly.
+		LogFormat: "auto",
 		Collectors: CollectorsConfig{
 			SyscallLatency: true,
 			TCPMonitor:     true,
@@ -185,9 +187,9 @@ func (c *Config) Validate() error {
 	}
 
 	switch c.LogFormat {
-	case "text", "json":
+	case "text", "json", "auto", "":
 	default:
-		return fmt.Errorf("invalid log_format %q: must be text or json", c.LogFormat)
+		return fmt.Errorf("invalid log_format %q: must be text, json, or auto", c.LogFormat)
 	}
 
 	if c.Doctor.Duration < time.Second {

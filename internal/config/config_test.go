@@ -14,8 +14,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("default LogLevel = %q, want %q", cfg.LogLevel, "info")
 	}
-	if cfg.LogFormat != "text" {
-		t.Errorf("default LogFormat = %q, want %q", cfg.LogFormat, "text")
+	if cfg.LogFormat != "auto" {
+		t.Errorf("default LogFormat = %q, want %q", cfg.LogFormat, "auto")
 	}
 	if cfg.Doctor.Duration != 30*time.Second {
 		t.Errorf("default Doctor.Duration = %s, want 30s", cfg.Doctor.Duration)

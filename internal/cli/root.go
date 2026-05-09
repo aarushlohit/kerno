@@ -68,7 +68,7 @@ and copy-paste fix steps.`,
 	pf := root.PersistentFlags()
 	pf.StringVar(&cfgFile, "config", "", "config file (default: $KERNO_CONFIG, /etc/kerno/config.yaml)")
 	pf.String("log-level", "info", "log verbosity: debug, info, warn, error")
-	pf.String("log-format", "text", "log encoding: text (human), json (structured)")
+	pf.String("log-format", "auto", "log encoding: auto (detect TTY), text (human), json (structured)")
 	pf.String("output", "pretty", "output format: pretty (terminal), json (machine)")
 	pf.Bool("no-color", false, "disable colored output (also honors $NO_COLOR)")
 
@@ -80,6 +80,7 @@ and copy-paste fix steps.`,
 	startCmd := newStartCmd()
 	traceCmd := newTraceCmd()
 	watchCmd := newWatchCmd()
+	auditCmd := newAuditCmd()
 	chaosCmd := newChaosCmd()
 	versionCmd := newVersionCmd()
 
@@ -93,11 +94,12 @@ and copy-paste fix steps.`,
 	predictCmd.GroupID = "diagnose"
 	traceCmd.GroupID = "observe"
 	watchCmd.GroupID = "observe"
+	auditCmd.GroupID = "observe"
 	startCmd.GroupID = "ops"
 	chaosCmd.GroupID = "ops"
 	versionCmd.GroupID = "ops"
 
-	root.AddCommand(doctorCmd, explainCmd, predictCmd, traceCmd, watchCmd, startCmd, chaosCmd, versionCmd)
+	root.AddCommand(doctorCmd, explainCmd, predictCmd, traceCmd, watchCmd, auditCmd, startCmd, chaosCmd, versionCmd)
 
 	return root
 }
@@ -164,6 +166,16 @@ func initConfig(cmd *cobra.Command) error {
 }
 
 // initLogger configures the global slog logger.
+//
+// Format selection cascade:
+//
+//  1. If the user (or env via KERNO_LOG_FORMAT) explicitly set "json"
+//     or "text", honor that.
+//  2. If unset/auto, detect: structured JSON when stderr is *not* a
+//     terminal (daemon, Kubernetes pod, journald, CI) — otherwise
+//     human-friendly text. This satisfies Phase 4 DoD #5: "structured
+//     JSON logs in daemon mode; colored human logs in CLI mode" with
+//     zero configuration on the user's part.
 func initLogger(level, format string) {
 	var lvl slog.Level
 	switch level {
@@ -179,8 +191,17 @@ func initLogger(level, format string) {
 
 	opts := &slog.HandlerOptions{Level: lvl}
 
+	resolved := format
+	if resolved == "" || resolved == "auto" {
+		if isStderrTerminal() {
+			resolved = "text"
+		} else {
+			resolved = "json"
+		}
+	}
+
 	var handler slog.Handler
-	switch format {
+	switch resolved {
 	case "json":
 		handler = slog.NewJSONHandler(os.Stderr, opts)
 	default:
@@ -188,4 +209,15 @@ func initLogger(level, format string) {
 	}
 
 	slog.SetDefault(slog.New(handler))
+}
+
+// isStderrTerminal reports whether stderr is attached to an interactive
+// TTY. Falls back to false on any error so we err on the side of
+// emitting structured JSON in ambiguous environments (CI, k8s, systemd).
+func isStderrTerminal() bool {
+	fi, err := os.Stderr.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
