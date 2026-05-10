@@ -49,6 +49,8 @@ jobs:
             release
             ci
             docs
+            deps
+            deps-dev
           requireScope: false
           subjectPattern: "^[a-z].+[^.]$"
           subjectPatternError: |
