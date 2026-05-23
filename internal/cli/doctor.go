@@ -97,6 +97,11 @@ Add --ai to enrich findings with AI-powered analysis (requires API key).`,
 	flags.BoolVarP(&quiet, "quiet", "q", false, "only emit critical/warning findings (CI-friendly)")
 	flags.BoolVar(&noBanner, "no-banner", false, "suppress the ASCII banner block")
 
+	//nolint:errcheck // RegisterFlagCompletionFunc only returns error on invalid flag name, which is static.
+	_ = cmd.RegisterFlagCompletionFunc("output", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		return []string{"pretty", "json"}, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	return cmd
 }
 
