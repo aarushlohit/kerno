@@ -110,6 +110,38 @@ jobs:
           path: bin/kerno
           retention-days: 7
 
+  # ── Systemd Runtime Validation ───────────────────────────────────────────
+  # Installs the built binary and unit into real systemd paths, starts the
+  # service, validates /healthz, checks journal output, and stops cleanly.
+  systemd:
+    name: Systemd Runtime
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install runtime test dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends curl jq
+
+      - name: Download built binary
+        uses: actions/download-artifact@v7
+        with:
+          name: kerno-linux-amd64
+          path: bin
+
+      - name: Prepare built binary
+        run: chmod +x bin/kerno
+
+      - name: Validate systemd service startup and health endpoint
+        run: ./scripts/test-systemd-service.sh
+
   # ── BPF Compile Check ────────────────────────────────────────────────────
   bpf:
     name: BPF Compile

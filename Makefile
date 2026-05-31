@@ -43,7 +43,7 @@ UI_DIST_DIR      := internal/dashboard/dist/assets
 
 # ─── Phony Targets ───────────────────────────────────────────────────────────
 
-.PHONY: all build build-ebpf build-debug test test-cover test-race lint vet check \
+.PHONY: all build build-ebpf build-debug test test-cover test-race test-systemd lint vet check \
 	fmt clean bpf generate docker help \
 	ui-fetch ui-dev install-tools setup precommit \
 	verify demo demo-cast bpf-verify manpage
@@ -112,6 +112,10 @@ test:
 ## test-race: Run tests with race detector
 test-race:
 	$(GO) test ./... -count=1 -race -timeout 120s
+
+## test-systemd: Install and validate the systemd service runtime
+test-systemd: build
+	./scripts/test-systemd-service.sh
 
 ## test-cover: Run tests with coverage report
 test-cover:
