@@ -140,9 +140,40 @@ ServiceMonitor for the Prometheus Operator is built-in. Raw manifests live at [`
 
 ---
 
+
 ### 2 · Bare metal · VMs · EC2 · GCE
 
 The same binary, the same command. No Kubernetes required.
+
+#### Native package manager (recommended for production)
+
+On Debian/Ubuntu:
+```bash
+curl -LO https://github.com/optiqor/kerno/releases/latest/download/kerno_<version>_amd64.deb
+sudo apt install ./kerno_<version>_amd64.deb
+```
+
+On RHEL / Fedora / Amazon Linux 2023:
+```bash
+curl -LO https://github.com/optiqor/kerno/releases/latest/download/kerno-<version>-1.x86_64.rpm
+sudo dnf install kerno-<version>-1.x86_64.rpm
+```
+
+Once installed, run:
+
+```bash
+sudo kerno doctor
+```
+
+If you want kerno running persistently as a daemon (for continuous 
+Prometheus metrics):
+
+```bash
+sudo systemctl enable --now kerno
+journalctl -u kerno -f
+```
+
+#### curl installer (quick start / CI)
 
 ```bash
 curl -sfL https://raw.githubusercontent.com/optiqor/kerno/main/scripts/install.sh | sudo bash
